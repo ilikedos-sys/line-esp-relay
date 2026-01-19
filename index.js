@@ -10,7 +10,9 @@ app.get("/ingest", async (req, res) => {
   const { msg = "ESP8266 data", ...params } = req.query;
 
   let text = "📡 ESP8266 通知\n";
-  text += `🕒 ${new Date().toLocaleString("zh-TW")}\n`;
+  const taiwanTime = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
+  text += `🕒 ${taiwanTime}\n`;
+  //text += `🕒 ${new Date().toLocaleString("zh-TW")}\n`;
   if (msg) text += `\n${msg}\n`;
   for (const [k, v] of Object.entries(params)) {
     text += `• ${k} = ${v}\n`;
