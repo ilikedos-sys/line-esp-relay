@@ -7,44 +7,43 @@ const app = express();
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const USER_ID = process.env.USER_ID;
 
-// 同樣訊息在這段時間內不會重複送（毫秒）
+// 同樣內容 3 秒內不重送
 const DEDUP_WINDOW_MS = 3000;
 
 let lastHash = "";
 let lastTimestamp = 0;
 
-// 不依賴 timeZone 資料庫：用 UTC+8 固定換算台灣時間
-function taipeiTimeString(date = new Date()) {
-  const t = date.getTime() + 8 * 60 * 60 * 1000; // +08:00
-  const d = new Date(t);
+// === 絕對台灣時間（UTC+8）===
+function taiwanTime() {
+  const nowUtcMs = Date.now();                 // UTC timestamp
+  const taiwanMs = nowUtcMs + 8 * 60 * 60 * 1000;
+  const d = new Date(taiwanMs);
 
-  // 用 UTC 的 getter 取值（避免受到伺服器本地時區影響）
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mi = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  const Y = d.getUTCFullYear();
+  const M = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const D = String(d.getUTCDate()).padStart(2, "0");
+  const h = String(d.getUTCHours()).padStart(2, "0");
+  const m = String(d.getUTCMinutes()).padStart(2, "0");
+  const s = String(d.getUTCSeconds()).padStart(2, "0");
 
-  return `${yyyy}/${mm}/${dd} ${hh}:${mi}:${ss}`;
+  return `${Y}/${M}/${D} ${h}:${m}:${s}`;
 }
 
 app.get("/ingest", async (req, res) => {
   try {
     const { msg = "ESP8266 data", ...params } = req.query;
 
-    const twTime = taipeiTimeString(new Date());
+    const timeStr = taiwanTime();
 
     let text = "📡 ESP8266 通知\n";
-    text += `🕒 ${twTime} (Taipei)\n`;
+    text += `🕒 ${timeStr} (UTC+8 Taiwan)\n\n`;
 
-    if (msg) text += `\n${msg}\n`;
-
+    if (msg) text += `${msg}\n`;
     for (const [k, v] of Object.entries(params)) {
       text += `• ${k} = ${v}\n`;
     }
 
-    // 去重：同內容短時間內只送一次
+    // 去重
     const hash = crypto.createHash("sha256").update(text).digest("hex");
     const now = Date.now();
     if (hash === lastHash && now - lastTimestamp < DEDUP_WINDOW_MS) {
@@ -67,3 +66,17 @@ app.get("/ingest", async (req, res) => {
 
     if (!r.ok) {
       const t = await r.text();
+      return res.status(500).json({ ok: false, line_error: t });
+    }
+
+    res.json({ ok: true, sent: text });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.get("/", (_, res) => res.send("OK"));
+
+app.listen(process.env.PORT || 3000, () =>
+  console.log("Server started")
+);
