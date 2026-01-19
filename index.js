@@ -4,56 +4,55 @@ import crypto from "crypto";
 
 const app = express();
 
-// 從 Render 環境變數讀取
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const USER_ID = process.env.USER_ID;
 
-// ===== 設定區 =====
 // 同樣訊息在這段時間內不會重複送（毫秒）
 const DEDUP_WINDOW_MS = 3000;
-// ==================
 
 let lastHash = "";
 let lastTimestamp = 0;
+
+// 不依賴 timeZone 資料庫：用 UTC+8 固定換算台灣時間
+function taipeiTimeString(date = new Date()) {
+  const t = date.getTime() + 8 * 60 * 60 * 1000; // +08:00
+  const d = new Date(t);
+
+  // 用 UTC 的 getter 取值（避免受到伺服器本地時區影響）
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+
+  return `${yyyy}/${mm}/${dd} ${hh}:${mi}:${ss}`;
+}
 
 app.get("/ingest", async (req, res) => {
   try {
     const { msg = "ESP8266 data", ...params } = req.query;
 
-    // 台灣時間
-    const taiwanTime = new Date().toLocaleString("zh-TW", {
-      timeZone: "Asia/Taipei",
-    });
+    const twTime = taipeiTimeString(new Date());
 
-    // 組合訊息內容
     let text = "📡 ESP8266 通知\n";
-    text += `🕒 ${taiwanTime}\n`;
+    text += `🕒 ${twTime} (Taipei)\n`;
 
-    if (msg) {
-      text += `\n${msg}\n`;
-    }
+    if (msg) text += `\n${msg}\n`;
 
     for (const [k, v] of Object.entries(params)) {
       text += `• ${k} = ${v}\n`;
     }
 
-    // ===== 去重機制 =====
+    // 去重：同內容短時間內只送一次
     const hash = crypto.createHash("sha256").update(text).digest("hex");
     const now = Date.now();
-
     if (hash === lastHash && now - lastTimestamp < DEDUP_WINDOW_MS) {
-      return res.json({
-        ok: true,
-        dedup: true,
-        note: "Duplicate message ignored",
-      });
+      return res.json({ ok: true, dedup: true });
     }
-
     lastHash = hash;
     lastTimestamp = now;
-    // ====================
 
-    // 推播到 LINE
     const r = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: {
@@ -67,32 +66,4 @@ app.get("/ingest", async (req, res) => {
     });
 
     if (!r.ok) {
-      const errText = await r.text();
-      return res.status(500).json({
-        ok: false,
-        line_status: r.status,
-        line_error: errText,
-      });
-    }
-
-    res.json({
-      ok: true,
-      sent: text,
-    });
-  } catch (err) {
-    res.status(500).json({
-      ok: false,
-      error: String(err),
-    });
-  }
-});
-
-// 健康檢查
-app.get("/", (req, res) => {
-  res.send("OK");
-});
-
-// 啟動伺服器
-app.listen(process.env.PORT || 3000, () => {
-  console.log("LINE ESP relay server started");
-});
+      const t = await r.text();
